@@ -1,0 +1,143 @@
+import Adafruit_DHT  # librería para para el protocolo de comunicación (1-wire) del sensor DHT22
+import time # librería para el uso de tiempos de espera
+import math  # Este módulo proporciona acceso a las funciones matemáticas definidas por el
+#estándar C 
+import Adafruit_ADS1x15#librería para la comunicación i2c con el adc ADS1115
+import paho.mqtt.publish as publish #librería usada para la comunicación a Thingspeak 
+#mediante el protocolo MQTT
+from datetime import datetime # librería usada para acceder a tiempo de envío de datos
+
+
+ID_canal = "1316844"  #canal de ThingSpeak donde se exportaran los datos
+
+api_Key = "G7KM6MH36BKZ5Q2K"  # Llave API de escritura del canal de ThingSpeak 
+
+
+useUnsecuredTCP = False
+useUnsecuredWebsockets = False
+useSSLWebsockets = True
+
+mqttHost = "mqtt.thingspeak.com" # Host de thingspeak 
+
+if useUnsecuredTCP: #Este método de conexión es el más simple y requiere la menor
+#     cantidad de recursos del sistema.
+    tTransport = "tcp"
+    tPort = 1883
+    tTLS = None
+#Websockets:Debido a que las conexiones TCP comunes sobre puertos diferentes al 80 son
+#habitualmente bloqueadas por los administradores de redes
+#el uso de esta tecnología proporcionaría una solución a este tipo de limitaciones
+# proveyendo una funcionalidad similar a la apertura de varias conexiones en distintos puertos,
+#pero multiplexando diferentes servicios WebSocket sobre un único puerto TCP
+#(a costa de una pequeña sobrecarga del protocolo).
+if useUnsecuredWebsockets:
+    tTransport = "websockets"
+    tPort = 80
+    tTLS = None
+#SSL es el acrónimo de Secure Sockets Layer (capa de sockets seguros), la tecnología estándar
+#para mantener segura una conexión a Internet,utiliza algoritmos de cifrado para codificar los
+#datos que se transmiten.
+if useSSLWebsockets:
+    import ssl
+    tTransport = "websockets"
+    tTLS = {'ca_certs':"/etc/ssl/certs/ca-certificates.crt",'tls_version':ssl.PROTOCOL_TLSv1}
+    tPort = 443
+
+#se construye el topic apartir de el id  y la apiKey de escritura del canal de thingspeak
+topic = "channels/" + ID_canal + "/publish/" + api_Key  
+
+#Crea una instancia ADS1115
+adc = Adafruit_ADS1x15.ADS1115()
+
+# Diferentes ganancias que determinan el rango de voltaje de comparación:
+#  - 2/3 = +/-6.144V
+#  -   1 = +/-4.096V
+#  -   2 = +/-2.048V
+#  -   4 = +/-1.024V
+#  -   8 = +/-0.512V
+#  -  16 = +/-0.256V
+
+GAIN = 2/3 #+/-6.144V
+# se inicializa variables
+humedad = 0 
+temperatura=0
+
+# Crea una instancia para el sensor DHT22
+SENSOR_DHT = Adafruit_DHT.DHT22
+PIN_DHT = 4 #GPIO4
+
+Id=1 # Identificador del nodo que se esta enviando
+
+while True:
+
+    hume, tempera =Adafruit_DHT.read(SENSOR_DHT, PIN_DHT) # se lee la humedad y la temperatura
+    
+    
+    # Se leen los canales del adc 0 y 1 con la ganancia anteriormente fijada
+    
+    D_MQ135 = adc.read_adc(0, gain=GAIN) #Se lee el canal 0 que esta conectado al sensor MQ135
+    V_MQ135=(6.144/(65536/2))*D_MQ135 # Se calcula el valor de voltaje con el valor digital
+    
+    D_MQ2 = adc.read_adc(1, gain=GAIN) #Se lee el canal 1 que esta conectado al sensor MQ2
+    V_MQ2=(6.144/(65536/2))*D_MQ2 # Se calcula el valor de voltaje con el valor digital
+    
+    RL= 20000          #Resistencia RL del modulo MQ135 y MQ-2 en ohms
+    Ro135=33783.98     #Resistencia Ro del modulo MQ135 en ohms
+    
+    # Variables de regresión lineal para encontrar las concentraciones en ppm
+    a135=5.5973         
+    b135=-0.3654      
+    Rs_MQ135=((32768/D_MQ135)-1)*RL # Se encuentra la resistencia que varia respecto a gases nocivos
+    ppm_135= ((Rs_MQ135/Ro135)/a135)**(1/b135) #se aplica la fórmula para encontrar los ppm
+    
+    
+    
+    Ro2 = 50000;              #Resistencia R0 del sensor MQ-2 en ohms
+   
+    # puntos de las graficas caracteristicas del MQ-2
+    X0 = math.log10(200)
+    Y0 = math.log10(1.7)
+    X1 = math.log10(10000)
+    Y1 = math.log10(0.28)
+    
+    # Calcular pendiente y punto de corte
+    A2 = (Y1-Y0)/(X1-X0)
+    B2 =  Y0-(A2*X0)
+    
+    
+    Rs_MQ2=((32768/D_MQ2)-1)*RL # Se encuentra el valor de la resistencia que varia dependiendo
+    #de la concentración de gases combustibles
+    
+    ppm_2= 10**(((math.log(Rs_MQ2/Ro2))*A2)+B2) # se encuentra la concentración de gases combustibles
+    # para el sensor MQ-2 en ppm
+    
+    if hume is not None and tempera is not None: # Si los valores leidos no son nulos
+        #asigna la humedad y temperatura a las variables que se imprimiran y enviaran
+        humedad=hume  
+        temperatura=tempera
+        
+    print("MQ135={0:0.2f} MQ2={1:0.2f} Temp= {2:0.1f} Hum:{3:0.1f} % ".format(
+                ppm_135, ppm_2, temperatura, humedad)) # se imprime las variables físicas medidas
+                                                       # con su respectivo formato
+    
+    now = datetime.now() # se toma el tiempo actual
+    tiempo=now.hour+(now.minute/60)+(now.second/3600) # se calcura el valor de tiempo en horas
+                                                      # con decimales
+    tiempo=str(tiempo) # se convierte a string las horas decimales
+    
+    
+    # se construye el string con el nombre de cada canal y el valor que se le asigna
+    tPayload = "field1="+str(temperatura)+"&field2="+str(humedad)+"&field3="+str(ppm_2)+"&field4="+str(ppm_135)+"&field5="+str(Id)+"&field6="+tiempo
+ 
+    #intenta publicar los datos
+    try:
+        publish.single(topic, payload=tPayload, hostname=mqttHost, port=tPort, tls=tTLS, transport=tTransport)
+    #Si hay una interrupción para detener la ejecución del programa por parte del usuario
+    #sale del try
+    except (KeyboardInterrupt):
+        break
+    # si otro tipo de problema ocurre, informa que hubo error al enviar 
+    except:
+        print ("Hubo un error al publicarse el dato")
+        
+    time.sleep(1) # espera 1 segundo

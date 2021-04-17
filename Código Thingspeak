@@ -1,0 +1,42 @@
+% Este código es uno de los que se utilizo para gráficar una variable en este caso la humedad 
+% contra el tiempo de envío de los datos desde la raspberry
+
+% link de thingspeak: https://thingspeak.com/channels/1316844
+%% SSCAPE
+
+% ID de el canal para leer:
+readChannelID = 1316844;
+
+
+% API KEY de lectura del canal
+
+readAPIKey = 'VX4PPGRCQZ5B0IJP';
+
+%ID del campo a leer
+fieldID = 1;
+%% Leer dato %%
+[data, time] = thingSpeakRead(readChannelID, 'Field', fieldID, 'NumPoints', 30, 'ReadKey', readAPIKey);
+
+
+%ID del campo a leer
+fieldID = 6;
+%% Leer dato %%
+[tiempo, time] = thingSpeakRead(readChannelID, 'Field', fieldID, 'NumPoints', 30, 'ReadKey', readAPIKey);
+
+%Transformar la hora en decimal a hora-minuto-segundo
+for i=1:size(tiempo,1)
+    hora(i)=floor(tiempo(i))
+    minuto(i)=floor((tiempo(i)-hora(i))*60)
+    segundo(i)=floor((tiempo(i)-hora(i)-(minuto(i)/60))*3600)
+    totalsegundos(i)=hora(i)*3600+minuto(i)*60+segundo(i)
+    t(i)=seconds(totalsegundos(i))
+end 
+
+
+%% Visualize Data %%
+pl=plot(t, data,'DurationTickFormat','hh:mm:ss')
+pl.Marker = 'o'
+
+xlabel("tiempo de envío") 
+ylabel("temperatura(°)") 
+title(["Temperatura vs tiempo de envío"])
